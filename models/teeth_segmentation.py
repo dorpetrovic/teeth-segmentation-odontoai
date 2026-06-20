@@ -6,7 +6,7 @@ Torchvision Mask R-CNN for dental panoramic X-ray tooth segmentation.
 COCO pretrained weights loaded automatically.
 
 Dataset:  OdontoAI — 1597 train / 400 val / 2000 test panoramic X-rays
-Classes:  52 FDI classes (adult permanent 11-48 + deciduous 51-85)
+Classes:  52 FDI classes 
 
 Usage:
     python models/teeth_segmentation.py train
@@ -25,13 +25,11 @@ import skimage.io
 import skimage.draw
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
-import torchvision
 from torchvision.models.detection import maskrcnn_resnet50_fpn, MaskRCNN_ResNet50_FPN_Weights
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 import torchvision.transforms.functional as F
 from PIL import Image
-import random
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
@@ -45,31 +43,32 @@ from configs.model_config import (
     ANCHOR_SIZES, ANCHOR_RATIOS, FDI_CLASSES,
 )
 
-DATA_DIR    = PROJECT_ROOT / 'data'
-IMG_DIR     = DATA_DIR / 'images'       # all train + val images
-TEST_DIR    = DATA_DIR / 'test'         # test images
-ANN_DIR     = DATA_DIR / 'annotations'
+DATA_DIR = PROJECT_ROOT / 'data'
+IMG_DIR = DATA_DIR / 'images'
+TEST_DIR = DATA_DIR / 'test'
+ANN_DIR = DATA_DIR / 'annotations'
 RESULTS_DIR = PROJECT_ROOT / 'outputs' / 'results' / 'maskrcnn_torch'
-VIZ_DIR     = PROJECT_ROOT / 'outputs' / 'visualizations'
+VIZ_DIR = PROJECT_ROOT / 'outputs' / 'visualizations'
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 VIZ_DIR.mkdir(parents=True, exist_ok=True)
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 
+# ── Colour scheme ─────────────────────────────────────────────────────────────
+
 QUADRANT_COLORS = {
-    'UR': (74,  144, 217),   # blue
-    'UL': (232, 112,  64),   # orange
-    'LL': ( 46, 204, 113),   # green
-    'LR': (155,  89, 182),   # purple
-    'DU': (241, 196,  15),   # yellow — deciduous upper
-    'DL': (231,  76,  60),   # red    — deciduous lower
-    'XX': (170, 170, 170),   # gray   — unknown
+    'UR': (74,  144, 217),
+    'UL': (232, 112,  64),
+    'LL': ( 46, 204, 113),
+    'LR': (155,  89, 182),
+    'DU': (241, 196,  15),
+    'DL': (231,  76,  60),
+    'XX': (170, 170, 170),
 }
 
 
 def get_color(cls_name):
-    """Map a class name like 'tooth-11' to an RGB color tuple."""
     try:
         fdi = int(cls_name.split('-')[1])
         if 11 <= fdi <= 18: return QUADRANT_COLORS['UR']
@@ -83,27 +82,26 @@ def get_color(cls_name):
     return QUADRANT_COLORS['XX']
 
 
+# ── CLAHE transform ───────────────────────────────────────────────────────────
 
 class CLAHETransform:
-    """
-    Apply CLAHE contrast enhancement before converting to tensor.
-    Applied during training and inference so the model always sees
-    enhanced images — consistent with what we found works best in EDA.
-    """
+    """Apply CLAHE contrast enhancement on PIL Image."""
     def __call__(self, image):
-        # image is a PIL Image here — convert to numpy, enhance, convert back
-        img_np  = np.array(image)
-        img_np  = enhance_contrast(img_np, method='clahe')
+        img_np = np.array(image)
+        img_np = enhance_contrast(img_np, method='clahe')
         return Image.fromarray(img_np)
 
+
+# ── Dataset ───────────────────────────────────────────────────────────────────
 
 class TeethDataset(Dataset):
     """
     COCO-format dataset for dental panoramic X-ray tooth segmentation.
 
-    Loads images, annotations from a COCO JSON file.
-    Applies CLAHE contrast enhancement on every image.
-    Returns torchvision-compatible (image_tensor, target) pairs.
+    Preprocessing per image:
+      1. Load RGB uint8
+      2. CLAHE contrast enhancement
+      3. Convert to tensor
     """
 
     def __init__(self, annotation_file, img_dir):
@@ -113,12 +111,11 @@ class TeethDataset(Dataset):
         self.img_dir = Path(img_dir)
         self.clahe = CLAHETransform()
 
-        # Build category map: COCO category_id → class index (1-based, 0=background)
-        # 'tooth-11' has category_id=1 → class index 1
+        # category_id → class index (1-based, 0 = background)
         sorted_cats = sorted(self.coco['categories'], key=lambda x: x['id'])
         self.cat_map = {cat['id']: i + 1 for i, cat in enumerate(sorted_cats)}
 
-        # Index annotations by image_id for fast lookup
+        # Index annotations by image_id
         self.anns_by_image = {}
         for ann in self.coco['annotations']:
             self.anns_by_image.setdefault(ann['image_id'], []).append(ann)
@@ -139,16 +136,15 @@ class TeethDataset(Dataset):
         img_info = self.images[idx]
         img_path = self.img_dir / img_info['file_name']
 
-        # Load image and apply CLAHE
-        image = load_image(str(img_path))             # RGB uint8 (H, W, 3)
-        image = self.clahe(Image.fromarray(image))    # CLAHE enhancement
-        image = np.array(image)                       # back to numpy
+        # Load and apply CLAHE
+        image = load_image(str(img_path))
+        image = np.array(self.clahe(Image.fromarray(image)))
 
         H, W = image.shape[:2]
-        anns  = self.anns_by_image.get(img_info['id'], [])
+        anns = self.anns_by_image.get(img_info['id'], [])
 
-        masks  = []
-        boxes  = []
+        masks = []
+        boxes = []
         labels = []
 
         for ann in anns:
@@ -162,7 +158,6 @@ class TeethDataset(Dataset):
             xs = np.array(flat[0::2])
             ys = np.array(flat[1::2])
 
-            # Convert polygon to binary pixel mask
             mask = np.zeros((H, W), dtype=np.uint8)
             rr, cc = skimage.draw.polygon(ys, xs)
             rr = np.clip(rr, 0, H - 1)
@@ -172,7 +167,6 @@ class TeethDataset(Dataset):
             if mask.sum() == 0:
                 continue
 
-            # Derive bounding box from mask extents
             rows = np.any(mask, axis=1)
             cols = np.any(mask, axis=0)
             y1, y2 = np.where(rows)[0][[0, -1]]
@@ -198,8 +192,8 @@ class TeethDataset(Dataset):
             boxes_t = torch.as_tensor(boxes,  dtype=torch.float32)
             labels_t = torch.as_tensor(labels, dtype=torch.int64)
             masks_t = torch.as_tensor(np.stack(masks), dtype=torch.uint8)
-            area = (boxes_t[:, 3] - boxes_t[:, 1]) * (boxes_t[:, 2] - boxes_t[:, 0])
-
+            area = (boxes_t[:, 3] - boxes_t[:, 1]) * \
+                       (boxes_t[:, 2] - boxes_t[:, 0])
             target = {
                 'boxes': boxes_t,
                 'labels': labels_t,
@@ -208,7 +202,7 @@ class TeethDataset(Dataset):
                 'area': area,
                 'iscrowd': torch.zeros(len(masks), dtype=torch.int64),
             }
-        
+
         image_t = F.to_tensor(image)
         return image_t, target
 
@@ -217,48 +211,43 @@ def collate_fn(batch):
     return tuple(zip(*batch))
 
 
+# ── Model ─────────────────────────────────────────────────────────────────────
+
 def build_model(num_classes):
     """
     Build Mask R-CNN with ResNet50+FPN backbone.
-    Loads COCO pretrained weights and replaces the heads for num_classes.
+    Loads COCO pretrained weights and replaces heads for num_classes.
     """
     model = maskrcnn_resnet50_fpn(
         weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT,
         box_nms_thresh = NMS_THRESHOLD,
         box_score_thresh = CONF_THRESHOLD,
-        box_detections_per_img= MAX_DETECTIONS,
+        box_detections_per_img = MAX_DETECTIONS,
     )
-
-    # Replace classification head
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    # Replace mask head
     in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(
-        in_features_mask, 256, num_classes
-    )
-
+    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, 256, num_classes)
     return model
 
 
+# ── Training ──────────────────────────────────────────────────────────────────
 
 def train():
-
     print(f'Device: {DEVICE}')
     print(f'Classes: {NUM_CLASSES} (background + 52 FDI)')
     print(f'Epochs: {EPOCHS}')
     print(f'Batch size: {BATCH_SIZE}')
     print(f'LR: {LR}')
+    print(f'Weight decay: {WEIGHT_DECAY}')
     print(f'Early stop: patience={EARLY_STOPPING_PATIENCE}\n')
 
-    # Datasets & loaders
     dataset_train = TeethDataset(ANN_DIR / 'train.json', IMG_DIR)
-    dataset_val   = TeethDataset(ANN_DIR / 'val.json', IMG_DIR)
+    dataset_val = TeethDataset(ANN_DIR / 'val.json',   IMG_DIR)
 
     loader_train = DataLoader(
         dataset_train, batch_size=BATCH_SIZE,
-        shuffle=True,  num_workers=NUM_WORKERS,
+        shuffle=True, num_workers=NUM_WORKERS,
         collate_fn=collate_fn,
     )
     loader_val = DataLoader(
@@ -267,19 +256,20 @@ def train():
         collate_fn=collate_fn,
     )
 
-    # Model
     model = build_model(NUM_CLASSES)
     model.to(DEVICE)
 
-    # Optimizer & scheduler
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(params, lr=LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA)
+    optimizer = torch.optim.SGD(
+        params, lr=LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY
+    )
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=LR_STEP_SIZE, gamma=LR_GAMMA
+    )
 
-    # CSV logger
     import csv
-    csv_path   = RESULTS_DIR / 'training_history.csv'
-    csv_file   = open(csv_path, 'w', newline='')
+    csv_path = RESULTS_DIR / 'training_history.csv'
+    csv_file = open(csv_path, 'w', newline='')
     csv_writer = csv.writer(csv_file)
     csv_writer.writerow([
         'epoch', 'train_loss', 'val_loss',
@@ -287,16 +277,15 @@ def train():
         'loss_mask', 'loss_objectness', 'loss_rpn_box_reg'
     ])
 
-    # Early stopping state
-    best_val_loss    = float('inf')
+    best_val_loss = float('inf')
     patience_counter = 0
 
     print(f'Train: {len(dataset_train)} images')
-    print(f'Val:   {len(dataset_val)} images\n')
+    print(f'Val: {len(dataset_val)} images\n')
 
     for epoch in range(1, EPOCHS + 1):
 
-        # Training phase 
+        # ── Train ─────────────────────────────────────────────────────────────
         model.train()
         epoch_losses = []
 
@@ -317,8 +306,8 @@ def train():
                 print(f'  Epoch {epoch}/{EPOCHS}  step {i+1}/{len(loader_train)}'
                       f'  loss={losses.item():.4f}')
 
-        # Validation phase
-        model.train()   # keep train mode so loss_dict is returned
+        # ── Val ───────────────────────────────────────────────────────────────
+        model.train()
         val_losses = []
 
         with torch.no_grad():
@@ -335,12 +324,11 @@ def train():
         avg_val = np.mean(val_losses)
         ld = {k: v.item() for k, v in loss_dict.items()}
 
-        print(f'Epoch {epoch}/{EPOCHS}  '
-              f'train={avg_train:.4f}  '
-              f'val={avg_val:.4f}  '
+        print(f'Epoch {epoch}/{EPOCHS}'
+              f'train={avg_train:.4f}'
+              f'val={avg_val:.4f}'
               f'lr={optimizer.param_groups[0]["lr"]:.6f}')
 
-        # Log to CSV
         csv_writer.writerow([
             epoch, avg_train, avg_val,
             ld.get('loss_classifier', 0),
@@ -351,18 +339,16 @@ def train():
         ])
         csv_file.flush()
 
-        # Save latest checkpoint every epoch
         torch.save(model.state_dict(), RESULTS_DIR / 'last.pth')
 
-        # Early stopping 
         if avg_val < best_val_loss:
-            best_val_loss    = avg_val
+            best_val_loss = avg_val
             patience_counter = 0
             torch.save(model.state_dict(), RESULTS_DIR / 'best.pth')
-            print(f'  → New best model saved (val_loss={best_val_loss:.4f})')
+            print(f'→ New best model saved (val_loss={best_val_loss:.4f})')
         else:
             patience_counter += 1
-            print(f' → No improvement ({patience_counter}/{EARLY_STOPPING_PATIENCE})')
+            print(f'→ No improvement ({patience_counter}/{EARLY_STOPPING_PATIENCE})')
             if patience_counter >= EARLY_STOPPING_PATIENCE:
                 print(f'\nEarly stopping triggered at epoch {epoch}')
                 break
@@ -376,10 +362,7 @@ def train():
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
 def evaluate():
-    """
-    Run COCO-style evaluation using pycocotools.
-    Computes mAP@50 and mAP@50-95 for instance segmentation.
-    """
+    """Run COCO-style evaluation on val set using pycocotools."""
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
     from pycocotools import mask as maskUtils
@@ -388,7 +371,9 @@ def evaluate():
     assert weights_path.exists(), f'Weights not found: {weights_path}'
 
     model = build_model(NUM_CLASSES)
-    model.load_state_dict(torch.load(weights_path, map_location=DEVICE, weights_only=True))
+    model.load_state_dict(torch.load(
+        weights_path, map_location=DEVICE, weights_only=True
+    ))
     model.to(DEVICE)
     model.eval()
 
@@ -411,22 +396,20 @@ def evaluate():
                 boxes = output['boxes'].cpu().numpy()
                 scores = output['scores'].cpu().numpy()
                 labels = output['labels'].cpu().numpy()
-                masks = output['masks'].cpu().numpy()   # (N, 1, H, W)
+                masks = output['masks'].cpu().numpy()
 
                 for i in range(len(boxes)):
                     if scores[i] < CONF_THRESHOLD:
                         continue
-
                     mask = (masks[i, 0] > 0.5).astype(np.uint8)
                     rle  = maskUtils.encode(np.asfortranarray(mask))
                     rle['counts'] = rle['counts'].decode('utf-8')
-
                     x1, y1, x2, y2 = boxes[i]
                     coco_results.append({
                         'image_id': image_id,
-                        'category_id': int(labels[i]),
+                        'category_id':  int(labels[i]),
                         'segmentation': rle,
-                        'bbox': [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        'bbox': [float(x1), float(y1), float(x2-x1), float(y2-y1)],
                         'score': float(scores[i]),
                     })
 
@@ -434,20 +417,14 @@ def evaluate():
         print('No detections above threshold.')
         return
 
-    # converrts lists of prediction dicts into COCO obejct that
-    # pycocotools can compare against ground truth
-    coco_dt  = coco_gt.loadRes(coco_results) 
-    # creates evaluator: coco_gt - gt annotations, coco_dt -model prediction
-    # 'segm' evaluate mask IoU
+    coco_dt = coco_gt.loadRes(coco_results)
     coco_eval = COCOeval(coco_gt, coco_dt, 'segm')
-    #for every detection computes of matches a gt annotation
     coco_eval.evaluate()
-    #aggregates per image results into PR curves across all images and IoU thresholds
     coco_eval.accumulate()
     coco_eval.summarize()
 
     mAP50 = coco_eval.stats[1]
-    mAP   = coco_eval.stats[0]
+    mAP = coco_eval.stats[0]
 
     print()
     print('RESULTS SUMMARY')
@@ -459,23 +436,20 @@ def evaluate():
     print(f'mAP@50-95: {mAP   * 100:.1f}%')
 
 
-# Prediction 
+# ── Prediction ────────────────────────────────────────────────────────────────
 
 def predict(image_path):
-    """
-    Run inference on a single image.
-    Applies CLAHE, runs the model, draws masks and bounding boxes,
-    saves the result to outputs/visualizations/.
-    """
+    """Run inference on a single image."""
     weights_path = RESULTS_DIR / 'best.pth'
     assert weights_path.exists(), f'Weights not found: {weights_path}'
 
     model = build_model(NUM_CLASSES)
-    model.load_state_dict(torch.load(weights_path, map_location=DEVICE, weights_only=True))
+    model.load_state_dict(torch.load(
+        weights_path, map_location=DEVICE, weights_only=True
+    ))
     model.to(DEVICE)
     model.eval()
 
-    # Load and preprocess
     image = load_image(str(image_path))
     enhanced = enhance_contrast(image, method='clahe')
     image_t = F.to_tensor(enhanced).unsqueeze(0).to(DEVICE)
@@ -487,7 +461,7 @@ def predict(image_path):
     boxes = output['boxes'].cpu().numpy()
     scores = output['scores'].cpu().numpy()
     labels = output['labels'].cpu().numpy()
-    masks = output['masks'].cpu().numpy()   # (N, 1, H, W)
+    masks = output['masks'].cpu().numpy()
 
     keep = scores >= CONF_THRESHOLD
     boxes, scores, labels, masks = boxes[keep], scores[keep], labels[keep], masks[keep]
@@ -498,32 +472,23 @@ def predict(image_path):
         return enhanced
 
     output_img = enhanced.copy()
-
     for i in range(n):
         cls_name = FDI_CLASSES[labels[i]] if labels[i] < len(FDI_CLASSES) else 'tooth'
         color = get_color(cls_name)
         mask = (masks[i, 0] > 0.5)
 
-        # Semi-transparent mask overlay
         overlay = output_img.copy()
         overlay[mask] = color
         output_img = cv2.addWeighted(output_img, 0.55, overlay, 0.45, 0)
 
-        # Bounding box
         x1, y1, x2, y2 = map(int, boxes[i])
         cv2.rectangle(output_img, (x1, y1), (x2, y2), color, 2)
 
-        # FDI label at mask centroid
-        mask_u8 = mask.astype(np.uint8)
-        M = cv2.moments(mask_u8)
-        if M['m00'] > 0:
-            cx = int(M['m10'] / M['m00'])
-            cy = int(M['m01'] / M['m00'])
-        else:
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-
-        cv2.putText(output_img, cls_name, (cx - 10, cy + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        M  = cv2.moments(mask.astype(np.uint8))
+        cx = int(M['m10']/M['m00']) if M['m00'] > 0 else (x1+x2)//2
+        cy = int(M['m01']/M['m00']) if M['m00'] > 0 else (y1+y2)//2
+        cv2.putText(output_img, cls_name, (cx-10, cy+5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2)
 
     out_path = VIZ_DIR / f'pred_{Path(image_path).name}'
     cv2.imwrite(str(out_path), cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR))
@@ -531,33 +496,35 @@ def predict(image_path):
     return output_img
 
 
-# used in Gradio, loads once at startup then reuse for every request
+# ── Inference loader ──────────────────────────────────────────────────────────
+
 def load_inference_model():
-    """
-    Load model once at startup for use in Gradio or FastAPI.
-    Downloads weights from Hugging Face Hub if not found locally.
-    """
+    """Load model for Gradio/FastAPI. Downloads weights from HF Hub if needed."""
     weights_path = RESULTS_DIR / 'best.pth'
 
     if not weights_path.exists():
         from huggingface_hub import hf_hub_download
         print('Downloading weights from Hugging Face Hub...')
         hf_hub_download(
-            repo_id   = 'chocodo/teeth-segmentation-odontoai',
-            filename  = 'best.pth',
+            repo_id = 'chocodo/teeth-segmentation-odontoai',
+            filename = 'best.pth',
             local_dir = str(RESULTS_DIR),
         )
         print('Weights downloaded.')
 
     model = build_model(NUM_CLASSES)
-    model.load_state_dict(torch.load(weights_path, map_location=DEVICE, weights_only=True))
+    model.load_state_dict(torch.load(
+        weights_path, map_location=DEVICE, weights_only=True
+    ))
     model.to(DEVICE)
     model.eval()
     return model
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Mask R-CNN dental tooth segmentation')
+    parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['train', 'evaluate', 'predict'])
     parser.add_argument('--image', help='Image path for predict command')
     args = parser.parse_args()

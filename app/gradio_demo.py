@@ -33,9 +33,9 @@ CLASS_NAMES = FDI_CLASSES
 
 
 MODEL_METRICS = {
-    'mAP@50':     91.6,
-    'mAP@50-95':  67.9,
-    'Count MAE':  6.2,
+    'mAP@50': 88.7,
+    'mAP@50-95': 70.2,
+    'Count MAE': 2.3,
 }
 
 def get_color(cls_name):

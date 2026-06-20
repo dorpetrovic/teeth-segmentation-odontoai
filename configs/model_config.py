@@ -15,12 +15,12 @@ NUM_CLASSES  = 53            # set to 53, 32 FDI classes for adult tooth + 20 de
 IMAGE_MIN_SIZE = 800        # shorter side
 IMAGE_MAX_SIZE = 1333       # longer side — torchvision default
 
-EPOCHS          = 35
+EPOCHS          = 30
 BATCH_SIZE      = 2         # increase if VRAM allows
 NUM_WORKERS     = 4
 LR              = 0.001     # SGD learning rate
 MOMENTUM        = 0.9
-WEIGHT_DECAY    = 0.0005
+WEIGHT_DECAY    = 0.0005  
 LR_STEP_SIZE    = 10       # decay LR every N epochs
 LR_GAMMA        = 0.1       # multiply LR by this at each step
 
@@ -28,7 +28,7 @@ LR_GAMMA        = 0.1       # multiply LR by this at each step
 CONF_THRESHOLD  = 0.3 #0.5       # minimum score to show detection
 
 # tooth are naturally closer, so better higher number (as adjescent teeth can overlap)
-NMS_THRESHOLD   = 0.4 #0.3       # IOU threshold for NMS
+NMS_THRESHOLD   = 0.5 #0.3       # IOU threshold for NMS
 MAX_DETECTIONS  = 60        # max instances per image
 
 # After resize to ~800px shorter side, teeth are ~50-150px
