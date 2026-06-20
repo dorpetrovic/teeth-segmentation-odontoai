@@ -11,7 +11,7 @@ jobs:
           fetch-depth: 0
       - name: Push to HF Spaces
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN_DENTAL_SEG }}
+          HF_TOKEN: ${{ secrets.ODONTOAI_TOKEN }}
         run: |
           git config --global user.email "dorpetrovic@users.noreply.github.com"
           git config --global user.name "dorpetrovic"
