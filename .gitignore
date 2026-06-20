@@ -1,0 +1,11 @@
+data/images/
+data/test/
+outputs/results/
+outputs/visualizations/
+utils/metrics.py
+__pycache__/
+*.pyc
+.env
+*.pth
+.ipynb_checkpoints/
+.venv/
