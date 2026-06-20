@@ -17,7 +17,7 @@ jobs:
 
       - name: Upload to HF Spaces
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN_DENTAL_SEG }}
+          HF_TOKEN: ${{ secrets.ODONTOAI_TOKEN }}
         run: |
           python - <<'EOF'
           import os
