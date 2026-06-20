@@ -9,3 +9,5 @@ __pycache__/
 *.pth
 .ipynb_checkpoints/
 .venv/
+data/annotations/train.json
+data/annotations/val.json
